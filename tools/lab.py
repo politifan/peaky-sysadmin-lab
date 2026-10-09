@@ -105,7 +105,12 @@ ethernets:
         write(folder/'scanned.pub',key)
         got=capture(['ssh-keygen','-lf',str(folder/'scanned.pub')]);assert finger in got,'SSH fingerprint differs from separate VM console'
         with (R/'known_hosts').open('a') as f:f.write(key)
-        guard(n);ssh(n,'test -f /var/lib/peaky-ready');print(n,'ready; console/network fingerprint matched',finger,flush=True)
+        guard(n);ssh(n,'test -f /var/lib/peaky-ready')
+        # Check actual tools, not only a cloud-init marker; packaging transitions
+        # can otherwise leave an apparently ready guest without DNS commands.
+        ssh(n,'sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx curl jq acl rsync bind9-dnsutils nftables sqlite3 lvm2 samba smbclient krb5-user ldap-utils sudo openssh-server')
+        ssh(n,'command -v dig && command -v smbclient && command -v sqlite3 && command -v getfacl && command -v nft')
+        print(n,'ready; required tools and console/network fingerprint matched',finger,flush=True)
     print('LAB READY',level,flush=True)
 def copy(node,source,dest):
     guard(node);run(['scp','-F',str(R/'ssh-config'),source,node+':'+dest])

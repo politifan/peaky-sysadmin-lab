@@ -46,6 +46,14 @@ jq -e '.data.alerts[0].state=="firing"' evidence/prom-firing.json
 for i in $(seq 1 30); do ./lab ssh node-b 'curl -fsS http://127.0.0.1:9090/api/v1/alerts' > evidence/prom-cleared.json; jq -e '.data.alerts|length==0' evidence/prom-cleared.json && break; sleep 2; done
 jq -e '.data.alerts|length==0' evidence/prom-cleared.json
 printf '\n=== EXTENDED: offline snapshot and full restored disk ===\n'
+for key in operator-old operator-new; do ssh-keygen -q -t ed25519 -N '' -f ".runtime/$key"; ./lab copy node-a ".runtime/$key.pub" "/tmp/$key.pub"; done
+./lab ssh node-a 'sudo install -d -m 0700 -o list-operator -g list-operator /home/list-operator/.ssh; sudo sh -c "cat /tmp/operator-old.pub /tmp/operator-new.pub > /home/list-operator/.ssh/authorized_keys"; sudo chown list-operator:list-operator /home/list-operator/.ssh/authorized_keys; sudo chmod 0600 /home/list-operator/.ssh/authorized_keys'
+ssh -F .runtime/ssh-config -l list-operator -i .runtime/operator-old node-a 'true'
+ssh -F .runtime/ssh-config -l list-operator -i .runtime/operator-new node-a 'sudo -n /usr/bin/systemctl --no-pager status nginx' > evidence/ssh-new-status.log
+./lab ssh node-a 'sudo cp /home/list-operator/.ssh/authorized_keys /home/list-operator/.ssh/authorized_keys.before-rotation; sudo sh -c "cat /tmp/operator-new.pub > /home/list-operator/.ssh/authorized_keys"'
+if ssh -F .runtime/ssh-config -l list-operator -i .runtime/operator-old node-a 'true' 2> evidence/ssh-old-denied.log; then exit 1; fi
+ssh -F .runtime/ssh-config -l list-operator -i .runtime/operator-new node-a 'true'
+printf 'SSH ROTATION PASS: new handshake succeeds, old handshake denied\n'
 ./lab stop node-a
 ./lab snapshot-vm node-a
 ./lab start node-a
