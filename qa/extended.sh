@@ -34,13 +34,16 @@ printf '\n=== EXTENDED: live exporter, pending, firing and return ===\n'
 ./lab ssh node-b 'sudo apt-get install -y prometheus'
 for f in prometheus.yml list-alerts.yml; do ./lab copy node-b "files/$f" "/tmp/$f"; ./lab ssh node-b "sudo install -m 0644 /tmp/$f /etc/prometheus/$f"; done
 ./lab ssh node-b 'sudo promtool check rules /etc/prometheus/list-alerts.yml && sudo promtool check config /etc/prometheus/prometheus.yml && sudo systemctl restart prometheus'
+ssh -F .runtime/ssh-config -o ExitOnForwardFailure=yes -f -N -L 127.0.0.1:19090:127.0.0.1:9090 node-b
 for i in $(seq 1 30); do ./lab ssh node-b "curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=up'" > evidence/prom-up.json; jq -e '.data.result[0].value[1]=="1"' evidence/prom-up.json && break; sleep 2; done
 jq -e '.data.result[0].value[1]=="1"' evidence/prom-up.json
+google-chrome --headless=new --no-sandbox --disable-gpu --window-size=1440,1000 --virtual-time-budget=10000 --screenshot=evidence/prometheus-targets.png http://127.0.0.1:19090/targets 2> .runtime/chrome.log
 ./lab ssh node-a 'sudo systemctl stop prometheus-node-exporter'
 for i in $(seq 1 30); do ./lab ssh node-b 'curl -fsS http://127.0.0.1:9090/api/v1/alerts' > evidence/prom-pending.json; jq -e '.data.alerts[0].state=="pending"' evidence/prom-pending.json && break; sleep 1; done
 jq -e '.data.alerts[0].state=="pending"' evidence/prom-pending.json
 for i in $(seq 1 30); do ./lab ssh node-b 'curl -fsS http://127.0.0.1:9090/api/v1/alerts' > evidence/prom-firing.json; jq -e '.data.alerts[0].state=="firing"' evidence/prom-firing.json && break; sleep 2; done
 jq -e '.data.alerts[0].state=="firing"' evidence/prom-firing.json
+google-chrome --headless=new --no-sandbox --disable-gpu --window-size=1440,1000 --virtual-time-budget=10000 --screenshot=evidence/prometheus-alert-firing.png http://127.0.0.1:19090/alerts 2>> .runtime/chrome.log
 ./lab http --node node-a --expected files/index.txt --out evidence/http-exporter-down.json
 ./lab ssh node-a 'sudo systemctl start prometheus-node-exporter'
 for i in $(seq 1 30); do ./lab ssh node-b 'curl -fsS http://127.0.0.1:9090/api/v1/alerts' > evidence/prom-cleared.json; jq -e '.data.alerts|length==0' evidence/prom-cleared.json && break; sleep 2; done
@@ -54,6 +57,8 @@ ssh -F .runtime/ssh-config -l list-operator -i .runtime/operator-new node-a 'sud
 if ssh -F .runtime/ssh-config -l list-operator -i .runtime/operator-old node-a 'true' 2> evidence/ssh-old-denied.log; then exit 1; fi
 ssh -F .runtime/ssh-config -l list-operator -i .runtime/operator-new node-a 'true'
 printf 'SSH ROTATION PASS: new handshake succeeds, old handshake denied\n'
+if ./lab export-vm node-a backups/live-refused.qcow2; then exit 1; fi
+test ! -e backups/live-refused.qcow2
 ./lab stop node-a
 ./lab snapshot-vm node-a
 ./lab start node-a
@@ -65,7 +70,13 @@ if grep -F 'backing file:' evidence/full-image-info.txt; then exit 1; fi
 ./lab start node-a
 ./lab ssh node-a 'printf after-copy > ~/after-copy.txt'
 ./lab stop node-a
-if ./lab restore-vm node-b backups/node-a-full.qcow2; then exit 1; fi
+cp backups/node-a-full.qcow2.json .runtime/manifest-original.json
+# Change only metadata of the owned test copy; keep the disk intact.
+jq '.node="node-b"' .runtime/manifest-original.json > backups/node-a-full.qcow2.json
+if ./lab restore-vm node-a backups/node-a-full.qcow2; then exit 1; fi
+jq '.sha256="deliberately-wrong-hash"' .runtime/manifest-original.json > backups/node-a-full.qcow2.json
+if ./lab restore-vm node-a backups/node-a-full.qcow2; then exit 1; fi
+cp .runtime/manifest-original.json backups/node-a-full.qcow2.json
 ./lab restore-vm node-a backups/node-a-full.qcow2
 ./lab ssh node-a 'test ! -e ~/after-copy.txt && test -f ~/queue-copy.db && echo "old state returned; post-copy marker absent"'
 test -f .runtime/node-a/disk.qcow2

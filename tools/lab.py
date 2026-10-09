@@ -58,7 +58,7 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
     ssh_authorized_keys: [{pub}]
 package_update: true
-packages: [nginx, curl, jq, acl, rsync, bind9-dnsutils, nftables, sqlite3, lvm2, samba, smbclient, krb5-user, ldap-utils, sudo, openssh-server]
+packages: [nginx, curl, jq, acl, rsync, bind9-dnsutils, nftables, sqlite3, lvm2, samba, smbclient, krb5-user, ldap-utils, libsasl2-modules-gssapi-mit, sudo, openssh-server]
 write_files:
   - path: /etc/peaky-instance
     permissions: '0444'
@@ -108,8 +108,11 @@ ethernets:
         guard(n);ssh(n,'test -f /var/lib/peaky-ready')
         # Check actual tools, not only a cloud-init marker; packaging transitions
         # can otherwise leave an apparently ready guest without DNS commands.
-        ssh(n,'sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx curl jq acl rsync bind9-dnsutils nftables sqlite3 lvm2 samba smbclient krb5-user ldap-utils sudo openssh-server')
+        ssh(n,'sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx curl jq acl rsync bind9-dnsutils nftables sqlite3 lvm2 samba smbclient krb5-user ldap-utils libsasl2-modules-gssapi-mit sudo openssh-server')
         ssh(n,"sudo sh -c 'command -v dig && command -v smbclient && command -v sqlite3 && command -v getfacl && command -v nft'")
+        # The initial hosts file contains this guest's own hostname. Preserve
+        # subsequent learner edits across reboots instead of cloud-init resets.
+        ssh(n,"printf 'manage_etc_hosts: false\\n' | sudo tee /etc/cloud/cloud.cfg.d/99-peaky-hosts.cfg")
         print(n,'ready; required tools and console/network fingerprint matched',finger,flush=True)
     print('LAB READY',level,flush=True)
 def copy(node,source,dest):
