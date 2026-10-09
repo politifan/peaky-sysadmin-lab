@@ -16,11 +16,11 @@ grep -F UNREACHABLE evidence/ansible-partial.log
 printf '\n=== EXTENDED: encrypted variable, bounded no_log ===\n'
 vaultpass=$(openssl rand -hex 20)
 printf '%s\n' "$vaultpass" > .runtime/vault-password
-printf 'portal_token: "%s"\n' "$(openssl rand -hex 16)" > .runtime/training-vault.yml
+printf 'training_token: "%s"\n' "$(openssl rand -hex 16)" > .runtime/training-vault.yml
 chmod 0600 .runtime/vault-password .runtime/training-vault.yml
 ansible-vault encrypt --vault-password-file .runtime/vault-password .runtime/training-vault.yml
 (cd ansible && ansible-playbook secret.yml --vault-password-file ../.runtime/vault-password) > evidence/vault.log
-./lab ssh node-a 'sudo test -s /etc/list-portal-token; sudo stat -c "%a %U" /etc/list-portal-token' | grep -x '600 root'
+./lab ssh node-a 'sudo test -s /etc/list-training-token && sudo stat -c "%a %U" /etc/list-training-token' | grep -x '600 root'
 printf '\n=== EXTENDED: actual Kerberos client and GSSAPI LDAP ===\n'
 ./lab copy node-b files/krb5.conf /tmp/krb5.conf
 ./lab ssh node-b 'sudo install -m 0644 /tmp/krb5.conf /etc/krb5.conf'
