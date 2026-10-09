@@ -27,6 +27,7 @@ printf '\n=== EXTENDED: actual Kerberos client and GSSAPI LDAP ===\n'
 ./lab ssh dc1 'sudo cat /root/worker1.auth' | sed -n 's/^password = //p' > .runtime/worker-password
 chmod 0600 .runtime/worker-password
 ./lab copy node-b .runtime/worker-password /home/student/.peaky-worker-password
+./lab ssh node-b 'getent ahostsv4 dc1.lab.example'
 ./lab ssh node-b 'kinit worker1@LAB.EXAMPLE < /home/student/.peaky-worker-password && klist && ldapsearch -Y GSSAPI -H ldap://dc1.lab.example -b DC=lab,DC=example "(sAMAccountName=worker1)" dn && kdestroy && rm -- /home/student/.peaky-worker-password' | tee evidence/kerberos.log
 grep -i 'dn:.*worker1' evidence/kerberos.log
 printf '\n=== EXTENDED: live exporter, pending, firing and return ===\n'
