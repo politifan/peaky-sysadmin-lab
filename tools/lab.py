@@ -58,7 +58,7 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
     ssh_authorized_keys: [{pub}]
 package_update: true
-packages: [nginx, curl, jq, acl, rsync, dnsutils, nftables, sqlite3, lvm2, samba, smbclient, krb5-user, ldap-utils, sudo, openssh-server]
+packages: [nginx, curl, jq, acl, rsync, bind9-dnsutils, nftables, sqlite3, lvm2, samba, smbclient, krb5-user, ldap-utils, sudo, openssh-server]
 write_files:
   - path: /etc/peaky-instance
     permissions: '0444'
@@ -109,7 +109,7 @@ ethernets:
         # Check actual tools, not only a cloud-init marker; packaging transitions
         # can otherwise leave an apparently ready guest without DNS commands.
         ssh(n,'sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx curl jq acl rsync bind9-dnsutils nftables sqlite3 lvm2 samba smbclient krb5-user ldap-utils sudo openssh-server')
-        ssh(n,'command -v dig && command -v smbclient && command -v sqlite3 && command -v getfacl && command -v nft')
+        ssh(n,"sudo sh -c 'command -v dig && command -v smbclient && command -v sqlite3 && command -v getfacl && command -v nft'")
         print(n,'ready; required tools and console/network fingerprint matched',finger,flush=True)
     print('LAB READY',level,flush=True)
 def copy(node,source,dest):
