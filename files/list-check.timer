@@ -1,0 +1,7 @@
+[Unit]
+Description=Periodic own portal check
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=1min
+[Install]
+WantedBy=timers.target

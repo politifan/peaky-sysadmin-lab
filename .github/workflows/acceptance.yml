@@ -1,0 +1,45 @@
+name: System administration acceptance
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install VM tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-system-x86 qemu-utils cloud-image-utils ansible sshpass
+          if test -c /dev/kvm; then sudo chown "$(id -u):$(id -g)" /dev/kvm; fi
+      - name: Author route on three actual Debian VMs
+        run: bash qa/route.sh 2>&1 | tee acceptance.log
+      - name: Save nonsecret evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-evidence
+          path: |
+            acceptance.log
+            evidence/
+          if-no-files-found: warn
+      - name: Stop only own VMs
+        if: always()
+        run: ./lab down || true
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Real PowerShell and NTFS checks
+        shell: pwsh
+        run: ./qa/windows.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-evidence
+          path: evidence/

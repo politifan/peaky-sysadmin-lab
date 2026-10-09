@@ -1,0 +1,7 @@
+.runtime/
+evidence/
+backups/
+*.qcow2
+*.iso
+__pycache__/
+.venv/

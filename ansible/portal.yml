@@ -1,0 +1,42 @@
+---
+- name: Maintain two owned portal VMs
+  hosts: portal
+  become: true
+  serial: 1
+  any_errors_fatal: true
+  tasks:
+    - name: Install nginx package
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+    - name: Create document directory
+      ansible.builtin.file:
+        path: /srv/list-portal
+        state: directory
+        owner: root
+        group: www-data
+        mode: '0750'
+    - name: Deliver stable document
+      ansible.builtin.copy:
+        src: ../files/index.txt
+        dest: /srv/list-portal/index.txt
+        owner: root
+        group: www-data
+        mode: '0640'
+    - name: Deliver validated portal configuration
+      ansible.builtin.copy:
+        src: ../files/list-portal.conf
+        dest: /etc/nginx/conf.d/list-portal.conf
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Validate and reload nginx
+    - name: Ensure nginx running on boot
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+  handlers:
+    - name: Validate and reload nginx
+      ansible.builtin.shell: nginx -t && systemctl reload nginx
+      changed_when: true

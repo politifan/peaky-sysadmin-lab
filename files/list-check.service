@@ -1,0 +1,9 @@
+[Unit]
+Description=Check own List portal document
+After=nginx.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/list-check
+User=www-data
+NoNewPrivileges=true
+PrivateTmp=true
