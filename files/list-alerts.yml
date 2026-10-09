@@ -1,0 +1,10 @@
+groups:
+  - name: list-observation
+    rules:
+      - alert: ListNodeExporterDown
+        expr: up{job="list-node"} == 0
+        for: 15s
+        labels:
+          severity: warning
+        annotations:
+          summary: Own List node exporter scrape failed

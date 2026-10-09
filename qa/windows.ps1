@@ -3,6 +3,7 @@ $taskRoot = Join-Path $env:TEMP ('peaky-sysadmin-' + [guid]::NewGuid().ToString(
 New-Item -ItemType Directory -Path $taskRoot | Out-Null
 New-Item -ItemType Directory -Path evidence -Force | Out-Null
 Start-Transcript -Path evidence/windows.txt
+$createdUser = $false
 try {
     $PSVersionTable
     Get-Service | Select-Object -First 5 Name,Status,StartType | Format-Table
@@ -15,9 +16,11 @@ try {
     $acl | Format-List Owner,AccessToString
     # Test ACL on an owned file only, using an actual locally authenticated user token.
     $userName = 'peakyreader'
+    if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) { throw 'Existing user: refuse touching it' }
     $plainPassword = 'P' + [guid]::NewGuid().ToString('N') + '!a9'
     $securePassword = ConvertTo-SecureString $plainPassword -AsPlainText -Force
     New-LocalUser -Name $userName -Password $securePassword -Description 'Isolated author QA' | Out-Null
+    $createdUser = $true
     $sid = (Get-LocalUser -Name $userName).SID
     $folderAcl = Get-Acl -LiteralPath $taskRoot
     $folderAcl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($sid,'ReadAndExecute','Allow'))
@@ -51,6 +54,6 @@ public class PeakyAccess {
     Get-WinEvent -LogName System -MaxEvents 3 | Select-Object TimeCreated,ProviderName,Id,LevelDisplayName | Format-Table
     Write-Output 'WINDOWS PASS: own files, hash, real ACL allow/deny, new user token, events'
 } finally {
-    if (Get-LocalUser -Name peakyreader -ErrorAction SilentlyContinue) { Remove-LocalUser -Name peakyreader }
+    if ($createdUser) { Remove-LocalUser -Name peakyreader }
     Stop-Transcript
 }

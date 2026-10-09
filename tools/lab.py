@@ -11,10 +11,15 @@ IMAGE_SHA512='f46f0671a6e5bdec5291ab8972bae2f10e5408c2f64a74078f11efc2f06a436a9d
 def run(args,**kw):return subprocess.run(args,check=True,**kw)
 def capture(args):return subprocess.check_output(args,text=True)
 def write(p,text,mode=0o600):p.write_text(text,encoding='utf-8');p.chmod(mode)
+def file_hash(path):
+    h=hashlib.sha256()
+    with pathlib.Path(path).open('rb') as f:
+        for chunk in iter(lambda:f.read(1024*1024),b''):h.update(chunk)
+    return h.hexdigest()
 def state():return json.loads((R/'state.json').read_text())
 def guard(node):
     s=state();assert node in s['nodes'],'Start the selected node first'
-    v=capture(['ssh','-F',str(R/'ssh-config'),node,'cat /etc/peaky-instance; hostname']).strip().splitlines()
+    v=capture(['ssh','-F',str(R/'ssh-config'),node,'printf "%s\\n" "$(cat /etc/peaky-instance)" "$(hostname)"']).strip().splitlines()
     assert v==[s['instance'],node], 'Unexpected VM identity/hostname; inspect before changing anything'
 def ssh(node,cmd=None):
     guard(node)
@@ -145,7 +150,7 @@ def export_vm(node,dest):
     assert not p.exists(),'Refuse replacing an earlier export'
     p.parent.mkdir(exist_ok=True,parents=True,mode=0o700)
     run(['qemu-img','convert','-O','qcow2',state()['nodes'][node]['disk'],str(p)])
-    h=hashlib.sha256(p.read_bytes()).hexdigest()
+    h=file_hash(p)
     write(pathlib.Path(str(p)+'.json'),json.dumps({'node':node,'instance':state()['instance'],'sha256':h,'source_image_sha512':IMAGE_SHA512},indent=2))
     info=json.loads(capture(['qemu-img','info','--output=json',str(p)]));assert 'backing-filename' not in info
     print('EXPORTED standalone disk; keep it private',node,h)
@@ -154,13 +159,19 @@ def restore_vm(node,source):
     source=pathlib.Path(source).resolve();assert source.is_relative_to((ROOT/'backups').resolve())
     manifest=json.loads(pathlib.Path(str(source)+'.json').read_text())
     assert manifest['node']==node and manifest['instance']==s['instance'],'Wrong node/instance export'
-    assert hashlib.sha256(source.read_bytes()).hexdigest()==manifest['sha256'],'Corrupt VM export'
+    assert file_hash(source)==manifest['sha256'],'Corrupt VM export'
     info=json.loads(capture(['qemu-img','info','--output=json',str(source)]));assert 'backing-filename' not in info
     target=R/node/('restored-'+str(time.time_ns())+'.qcow2')
     run(['qemu-img','convert','-O','qcow2',str(source),str(target)])
     d=s['nodes'][node];old=d['disk'];d['args']=[a.replace('file='+old+',','file='+str(target)+',') for a in d['args']];d['disk']=str(target)
     write(R/'state.json',json.dumps(s,indent=2));start(node)
     print('RESTORED into separate disk; original disk preserved',node)
+def snapshot_vm(node):
+    s=state();assert node in s['nodes'];assert not alive(node),'Stop before offline snapshot'
+    d=s['nodes'][node];old=d['disk'];target=R/node/('snapshot-'+str(time.time_ns())+'.qcow2')
+    run(['qemu-img','create','-f','qcow2','-F','qcow2','-b',old,str(target)])
+    d['args']=[a.replace('file='+old+',','file='+str(target)+',') for a in d['args']];d['disk']=str(target)
+    write(R/'state.json',json.dumps(s,indent=2));print('Offline disk snapshot created; backing disks preserved',node)
 def http(node,expected,out):
     guard(node);url='http://127.0.0.1:'+str(NODES[node][1])+'/index.txt'
     try:
@@ -180,7 +191,7 @@ def main():
     p=argparse.ArgumentParser();sub=p.add_subparsers(dest='action',required=True)
     u=sub.add_parser('up');u.add_argument('level',choices=['basic','advanced'])
     sub.add_parser('status');sub.add_parser('down');sub.add_parser('prepare');sub.add_parser('domain-init')
-    for name in ['start','stop']:
+    for name in ['start','stop','snapshot-vm']:
         t=sub.add_parser(name);t.add_argument('node',choices=NODES)
     for name in ['export-vm','restore-vm']:
         t=sub.add_parser(name);t.add_argument('node',choices=NODES);t.add_argument('path')
@@ -194,6 +205,7 @@ def main():
     elif a.action=='http':http(a.node,a.expected,a.out)
     elif a.action=='domain-init':domain_init()
     elif a.action in ['start','stop']:globals()[a.action](a.node)
+    elif a.action=='snapshot-vm':snapshot_vm(a.node)
     elif a.action=='export-vm':export_vm(a.node,a.path)
     elif a.action=='restore-vm':restore_vm(a.node,a.path)
     else:globals()[a.action]()
