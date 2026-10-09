@@ -8,8 +8,15 @@ for f in index.txt list-portal.conf list-check.sh list-check.service list-check.
 ./lab copy node-a qa/basic.sh /tmp/basic.sh
 ./lab ssh node-a 'sudo bash /tmp/basic.sh'
 ./lab http --node node-a --expected files/index.txt --out evidence/http-before.json
+boot_before=$(./lab ssh node-a 'cat /proc/sys/kernel/random/boot_id')
 ./lab ssh node-a 'sudo reboot' || true
-for i in $(seq 1 90); do if ./lab ssh node-a 'test -f /var/lib/peaky-ready && systemctl is-active nginx' 2>/dev/null; then break; fi; sleep 3; done
+for i in $(seq 1 90); do
+  boot_after=$(./lab ssh node-a 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null || true)
+  if test -n "$boot_after" && test "$boot_before" != "$boot_after" && ./lab ssh node-a 'systemctl is-active nginx' 2>/dev/null; then break; fi
+  sleep 3
+done
+test -n "$boot_after" && test "$boot_before" != "$boot_after"
+printf 'Verified new boot_id; old=%s new=%s\n' "$boot_before" "$boot_after"
 ./lab http --node node-a --expected files/index.txt --out evidence/http-after-reboot.json
 ./lab ssh node-a 'sudo cat /tmp/basic-evidence.log' > evidence/basic.log
 ./lab copy node-a qa/advanced.sh /tmp/advanced.sh

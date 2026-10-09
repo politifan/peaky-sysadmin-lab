@@ -9,6 +9,9 @@ jobs:
   linux:
     runs-on: ubuntu-24.04
     timeout-minutes: 55
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - name: Install VM tools
@@ -17,7 +20,9 @@ jobs:
           sudo apt-get install -y qemu-system-x86 qemu-utils cloud-image-utils ansible sshpass
           if test -c /dev/kvm; then sudo chown "$(id -u):$(id -g)" /dev/kvm; fi
       - name: Author route on three actual Debian VMs
-        run: bash qa/route.sh 2>&1 | tee acceptance.log
+        run: |
+          bash qa/route.sh 2>&1 | tee acceptance.log
+          grep -F 'ROUTE PASS:' acceptance.log
       - name: Save nonsecret evidence
         if: always()
         uses: actions/upload-artifact@v4

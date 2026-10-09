@@ -27,6 +27,8 @@ install -m 0640 -o root -g www-data /tmp/index.txt /srv/list-portal/index.txt
 install -m 0644 /tmp/list-portal.conf /etc/nginx/conf.d/list-portal.conf
 nginx -t
 systemctl enable --now nginx
+systemctl reload nginx
+for i in $(seq 1 20); do ss -ltn | grep -q ':8080' && break; sleep 1; done
 curl -fsS http://127.0.0.1:8080/index.txt | cmp - /srv/list-portal/index.txt
 cp /etc/nginx/conf.d/list-portal.conf /tmp/portal-good.conf
 printf '\ninvalid_directive;\n' >> /etc/nginx/conf.d/list-portal.conf
