@@ -2,18 +2,20 @@
 # Prepared author CLI. No learner Python programming required.
 import argparse, hashlib, json, os, pathlib, re, shlex, socket, subprocess, sys, time, urllib.request
 ROOT=pathlib.Path(__file__).resolve().parents[1];os.chdir(ROOT)
+os.umask(0o077)
 R=ROOT/'.runtime';R.mkdir(exist_ok=True,mode=0o700)
 NODES={'node-a':(22181,18081,11),'node-b':(22182,18082,12),'dc1':(22183,18083,13)}
 IMAGE_ROOT='https://cloud.debian.org/images/cloud/trixie/20261001-2618/'
 IMAGE='debian-13-genericcloud-amd64-20261001-2618.qcow2'
+IMAGE_SHA512='f46f0671a6e5bdec5291ab8972bae2f10e5408c2f64a74078f11efc2f06a436a9d0313ed50e0472542eeabf780e9f7c792ac0a314c6c20507fcd9fd81b468c3d'
 def run(args,**kw):return subprocess.run(args,check=True,**kw)
 def capture(args):return subprocess.check_output(args,text=True)
 def write(p,text,mode=0o600):p.write_text(text,encoding='utf-8');p.chmod(mode)
 def state():return json.loads((R/'state.json').read_text())
 def guard(node):
     s=state();assert node in s['nodes'],'Start the selected node first'
-    v=capture(['ssh','-F',str(R/'ssh-config'),node,'cat /etc/peaky-instance']).strip()
-    assert v==s['instance'], 'Unexpected VM identity; inspect before changing anything'
+    v=capture(['ssh','-F',str(R/'ssh-config'),node,'cat /etc/peaky-instance; hostname']).strip().splitlines()
+    assert v==[s['instance'],node], 'Unexpected VM identity/hostname; inspect before changing anything'
 def ssh(node,cmd=None):
     guard(node)
     return run(['ssh','-F',str(R/'ssh-config'),node]+([] if cmd is None else [cmd]))
@@ -32,7 +34,7 @@ def up(level):
     h=hashlib.sha512()
     with image.open('rb') as f:
         for chunk in iter(lambda:f.read(1024*1024),b''):h.update(chunk)
-    assert h.hexdigest()==expected,'Debian image checksum mismatch'
+    assert h.hexdigest()==expected==IMAGE_SHA512,'Debian image checksum mismatch'
     print('Official Debian image SHA512 verified:',expected,flush=True)
     run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(R/'student-key')])
     pub=(R/'student-key.pub').read_text().strip();instance=os.urandom(16).hex()
@@ -83,7 +85,7 @@ ethernets:
             '-netdev','socket,id=lan,mcast=230.0.0.1:17777,localaddr=127.0.0.1',
             '-device',f'virtio-net-pci,netdev=lan,mac=52:54:00:77:00:{idx:02x}',
             '-display','none','-serial',f'file:{folder}/console.log','-monitor',f'unix:{folder}/monitor.sock,server=on,wait=off','-daemonize','-pidfile',str(folder/'qemu.pid')]
-        run(args);s['nodes'][n]={'pid':int((folder/'qemu.pid').read_text()),'port':port,'http':http,'ip':f'192.168.77.{ip}'}
+        run(args);s['nodes'][n]={'pid':int((folder/'qemu.pid').read_text()),'port':port,'http':http,'ip':f'192.168.77.{ip}','args':args,'disk':str(folder/'disk.qcow2')}
         conf.append(f'Host {n}\n  HostName 127.0.0.1\n  Port {port}\n  User student\n  IdentityFile {R}/student-key\n  IdentitiesOnly yes\n  StrictHostKeyChecking yes\n  UserKnownHostsFile {R}/known_hosts\n  BatchMode yes\n  ConnectTimeout 5\n')
     write(R/'state.json',json.dumps(s,indent=2));write(R/'ssh-config','\n'.join(conf));write(R/'known_hosts','')
     for n in selected:
@@ -104,6 +106,61 @@ def copy(node,source,dest):
     guard(node);run(['scp','-F',str(R/'ssh-config'),source,node+':'+dest])
 def status():
     for n in state()['nodes']:guard(n);ssh(n,'hostname; cat /etc/debian_version; systemctl is-system-running || true; ip -br address')
+def prepare():
+    for node in state()['nodes']:
+        if node=='dc1':continue
+        ssh(node,'install -d -m 0700 /home/student/peaky-setup')
+        for name in ['index.txt','list-portal.conf','list-check.sh','list-check.service','list-check.timer','prepare.sh']:
+            copy(node,'files/'+name,'/home/student/peaky-setup/'+name)
+        ssh(node,'sudo bash /home/student/peaky-setup/prepare.sh')
+def domain_init():
+    node='dc1';ssh(node,'install -d -m 0700 /home/student/peaky-setup')
+    copy(node,'files/domain-init.sh','/home/student/peaky-setup/domain-init.sh')
+    ssh(node,'sudo bash /home/student/peaky-setup/domain-init.sh')
+def alive(node):
+    d=state()['nodes'][node];proc=pathlib.Path('/proc')/str(d['pid'])/'cmdline'
+    if not proc.exists() or not proc.read_bytes():return False
+    assert ('peaky-'+state()['instance']+'-'+node).encode() in proc.read_bytes(),'PID reused by a different process'
+    return True
+def stop(node):
+    guard(node)
+    result=subprocess.run(['ssh','-F',str(R/'ssh-config'),node,'sudo poweroff'])
+    assert result.returncode in [0,255],result.returncode
+    deadline=time.monotonic()+120
+    while alive(node) and time.monotonic()<deadline:time.sleep(1)
+    assert not alive(node),'Shutdown not finished; do not copy live disk'
+    print(node,'gracefully powered off; disk preserved')
+def start(node):
+    s=state();assert node in s['nodes'];assert not alive(node),'VM already running'
+    d=s['nodes'][node];run(d['args']);d['pid']=int((R/node/'qemu.pid').read_text());write(R/'state.json',json.dumps(s,indent=2))
+    deadline=time.monotonic()+180
+    while time.monotonic()<deadline:
+        try:guard(node);print(node,'ready after start');return
+        except subprocess.CalledProcessError:time.sleep(2)
+    raise AssertionError('VM did not restart; inspect console')
+def export_vm(node,dest):
+    assert node in state()['nodes'];assert not alive(node),'Stop the VM before export'
+    p=pathlib.Path(dest).resolve();base=(ROOT/'backups').resolve()
+    assert p.is_relative_to(base),'Export must be under own backups/'
+    assert not p.exists(),'Refuse replacing an earlier export'
+    p.parent.mkdir(exist_ok=True,parents=True,mode=0o700)
+    run(['qemu-img','convert','-O','qcow2',state()['nodes'][node]['disk'],str(p)])
+    h=hashlib.sha256(p.read_bytes()).hexdigest()
+    write(pathlib.Path(str(p)+'.json'),json.dumps({'node':node,'instance':state()['instance'],'sha256':h,'source_image_sha512':IMAGE_SHA512},indent=2))
+    info=json.loads(capture(['qemu-img','info','--output=json',str(p)]));assert 'backing-filename' not in info
+    print('EXPORTED standalone disk; keep it private',node,h)
+def restore_vm(node,source):
+    s=state();assert node in s['nodes'];assert not alive(node),'Stop before selecting restored disk'
+    source=pathlib.Path(source).resolve();assert source.is_relative_to((ROOT/'backups').resolve())
+    manifest=json.loads(pathlib.Path(str(source)+'.json').read_text())
+    assert manifest['node']==node and manifest['instance']==s['instance'],'Wrong node/instance export'
+    assert hashlib.sha256(source.read_bytes()).hexdigest()==manifest['sha256'],'Corrupt VM export'
+    info=json.loads(capture(['qemu-img','info','--output=json',str(source)]));assert 'backing-filename' not in info
+    target=R/node/('restored-'+str(time.time_ns())+'.qcow2')
+    run(['qemu-img','convert','-O','qcow2',str(source),str(target)])
+    d=s['nodes'][node];old=d['disk'];d['args']=[a.replace('file='+old+',','file='+str(target)+',') for a in d['args']];d['disk']=str(target)
+    write(R/'state.json',json.dumps(s,indent=2));start(node)
+    print('RESTORED into separate disk; original disk preserved',node)
 def http(node,expected,out):
     guard(node);url='http://127.0.0.1:'+str(NODES[node][1])+'/index.txt'
     try:
@@ -116,14 +173,17 @@ def http(node,expected,out):
     print(json.dumps(result));assert result['passed'],'HTTP check failed (local self-check only)'
 def down():
     for n,d in state()['nodes'].items():
-        proc=pathlib.Path('/proc')/str(d['pid'])/'cmdline'
-        assert proc.exists() and ('peaky-'+state()['instance']+'-'+n).encode() in proc.read_bytes(),'PID identity changed'
+        if not alive(n):continue
         with socket.socket(socket.AF_UNIX) as sock:sock.connect(str(R/n/'monitor.sock'));sock.sendall(b'quit\n')
     print('Only own QEMU processes stopped. Disks preserved; no reset/deletion performed.')
 def main():
     p=argparse.ArgumentParser();sub=p.add_subparsers(dest='action',required=True)
     u=sub.add_parser('up');u.add_argument('level',choices=['basic','advanced'])
-    sub.add_parser('status');sub.add_parser('down')
+    sub.add_parser('status');sub.add_parser('down');sub.add_parser('prepare');sub.add_parser('domain-init')
+    for name in ['start','stop']:
+        t=sub.add_parser(name);t.add_argument('node',choices=NODES)
+    for name in ['export-vm','restore-vm']:
+        t=sub.add_parser(name);t.add_argument('node',choices=NODES);t.add_argument('path')
     s=sub.add_parser('ssh');s.add_argument('node',choices=NODES);s.add_argument('command',nargs='?')
     c=sub.add_parser('copy');c.add_argument('node',choices=NODES);c.add_argument('source');c.add_argument('destination')
     h=sub.add_parser('http');h.add_argument('--node',choices=NODES,required=True);h.add_argument('--expected',required=True);h.add_argument('--out',required=True)
@@ -132,5 +192,9 @@ def main():
     elif a.action=='ssh':ssh(a.node,a.command)
     elif a.action=='copy':copy(a.node,a.source,a.destination)
     elif a.action=='http':http(a.node,a.expected,a.out)
+    elif a.action=='domain-init':domain_init()
+    elif a.action in ['start','stop']:globals()[a.action](a.node)
+    elif a.action=='export-vm':export_vm(a.node,a.path)
+    elif a.action=='restore-vm':restore_vm(a.node,a.path)
     else:globals()[a.action]()
 if __name__=='__main__':main()

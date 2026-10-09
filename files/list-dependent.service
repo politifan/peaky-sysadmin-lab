@@ -1,0 +1,7 @@
+[Unit]
+Description=Dependent document check
+Requires=list-source.service
+After=list-source.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/list-check

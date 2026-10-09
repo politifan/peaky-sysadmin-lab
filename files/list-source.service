@@ -1,0 +1,6 @@
+[Unit]
+Description=Own source readiness marker
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/test -f /srv/list-portal/index.txt
