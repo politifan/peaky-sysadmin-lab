@@ -4,11 +4,7 @@ test "$(id -u)" = 0
 test -f /etc/peaky-instance
 exec > >(tee /tmp/domain-evidence.log) 2>&1
 printf '\n=== ADVANCED: actual Samba AD directory ===\n'
-systemctl disable --now smbd nmbd winbind || true
-mv /etc/samba/smb.conf /etc/samba/smb.conf.before-peaky
-adminpass="A$(openssl rand -hex 16)!a"
-samba-tool domain provision --realm=LAB.EXAMPLE --domain=LAB --server-role=dc --dns-backend=SAMBA_INTERNAL --use-rfc2307 --host-name=dc1 --host-ip=192.168.77.13 --adminpass="$adminpass" --option='interfaces=lo lan0' --option='bind interfaces only=yes'
-cp /var/lib/samba/private/krb5.conf /etc/krb5.conf
+test -f /etc/peaky-domain-prepared
 samba-tool group add Readers
 samba-tool group add Support
 samba-tool group addmembers Readers Support

@@ -4,6 +4,8 @@ mkdir -p evidence
 chmod +x lab
 ./lab up advanced
 ./lab status
+./lab prepare
+./lab prepare
 for f in index.txt list-portal.conf list-check.sh list-check.service list-check.timer; do ./lab copy node-a "files/$f" "/tmp/$f"; done
 ./lab copy node-a qa/basic.sh /tmp/basic.sh
 ./lab ssh node-a 'sudo bash /tmp/basic.sh'
@@ -36,9 +38,13 @@ if ./lab ssh node-b 'curl -fsS --max-time 3 http://192.168.77.11:8080/index.txt'
 ./lab http --node node-a --expected files/index.txt --out evidence/http-nat.json
 ./lab ssh node-a 'sudo nft list table inet peaky; sudo nft delete table inet peaky'
 ./lab ssh node-b 'curl -fsS http://192.168.77.11:8080/index.txt' | cmp - files/index.txt
+./lab domain-init
+./lab domain-init
 ./lab copy dc1 qa/domain.sh /tmp/domain.sh
 ./lab ssh dc1 'sudo bash /tmp/domain.sh'
 ./lab ssh dc1 'sudo cat /tmp/domain-evidence.log' > evidence/domain.log
 ./lab ssh node-b 'dig @192.168.77.13 _ldap._tcp.lab.example SRV +short' | tee evidence/domain-dns-from-client.txt
 grep 'dc1.lab.example' evidence/domain-dns-from-client.txt
+./lab ssh node-b "printf '\n192.168.77.13 dc1.lab.example\n' | sudo tee -a /etc/hosts"
+bash qa/extended.sh
 printf '\nROUTE PASS: three actual VMs, old data, reboot, LAN, AD, Ansible, restore\n'

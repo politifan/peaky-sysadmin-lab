@@ -27,7 +27,7 @@ systemctl stop list-source.service
 mv /srv/list-portal/index.txt /srv/list-portal/index.saved
 if systemctl start list-dependent.service; then exit 1; fi
 mv /srv/list-portal/index.saved /srv/list-portal/index.txt
-systemctl reset-failed list-source.service list-dependent.service
+systemctl reset-failed list-source.service
 systemctl start list-dependent.service
 systemctl show list-dependent.service -p After -p Requires -p Result
 printf '\n=== ADVANCED: real storage inside an owned image ===\n'
